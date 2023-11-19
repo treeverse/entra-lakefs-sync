@@ -25,6 +25,7 @@ LAKEFS_ENDPOINT = os.environ.get('LAKEFS_ENDPOINT')
 
 GROUP_MATCH = os.environ.get('GROUP_FILTER', '*')
 LAKEFS_DEFAULT_POLICIES = os.environ.get('LAKEFS_DEFAULT_POLICIES', 'AuthManageOwnCredentials,FSReadAll')
+DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
 
 class EntraID:
@@ -126,7 +127,8 @@ def sync_groups(entra: EntraID, lakefs: LakeFSAuth, group_filter: Optional[str] 
                     print(f'Attaching policy "{policy_id}" to group: "{group_id}"')
                     if dry_run:
                         print(f'attach policy "{policy_id}" to group "{group_id}"')
-                    lakefs.attach_policy_to_group(policy_id, group_id)
+                    else:
+                        lakefs.attach_policy_to_group(policy_id, group_id)
         
         # Done!
         print(f'Done syncing group: "{group_id}"')
@@ -139,4 +141,4 @@ if __name__ == '__main__':
     policies = None
     if LAKEFS_DEFAULT_POLICIES:
         policies = [p.strip() for p in LAKEFS_DEFAULT_POLICIES.split(',')]
-    sync_groups(entra, lakefs, GROUP_MATCH, default_policies=policies, dry_run=True)
+    sync_groups(entra, lakefs, GROUP_MATCH, default_policies=policies, dry_run=DRY_RUN)
