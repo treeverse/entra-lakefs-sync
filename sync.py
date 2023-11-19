@@ -61,12 +61,6 @@ class EntraID:
     def get_group_names(self, key='displayName') -> List[str]:
         groups = self._lookup('/groups')
         return [group.get(key) for group in groups]
-    
-    def list_users(self, group_id: str):
-        data = self._lookup(f'/groups/{group_id}/members/microsoft.graph.user', params={
-            '$select': f'id',
-            '$orderby': 'id',
-        })
 
 
 class LakeFSAuth:
@@ -98,29 +92,14 @@ class LakeFSAuth:
             if e.status == 409 and exist_ok:
                 return
             raise e
-            
-    def create_user(self, user_id: str, exist_ok: bool = True):
-        try:
-            self.client.auth_api.create_user(UserCreation(id=user_id))
-        except ApiException as e:
-            if e.status == 409 and exist_ok:
-                return
-            raise e
         
     def attach_policy_to_group(self, policy_id, group_id):
         self.client.auth_api.attach_policy_to_group(
             group_id=group_id, policy_id=policy_id)
     
-    def add_user_to_group(self, group_id, user_id):
-        self.client.auth_api.add_group_membership(
-            group_id=group_id, user_id=user_id)
-
-    def remove_user_from_group(self, group_id, user_id):
-        self.client.auth_api.delete_group_membership(
-            group_id=group_id, user_id=user_id)
 
 
-def sync(entra: EntraID, lakefs: LakeFSAuth, group_filter: Optional[str] = None, default_policies: Optional[List[str]] = None, dry_run=True):
+def sync_groups(entra: EntraID, lakefs: LakeFSAuth, group_filter: Optional[str] = None, default_policies: Optional[List[str]] = None, dry_run=True):
     # Get groups from EntraID
     filtered_groups = entra.get_group_names()
     if group_filter:
@@ -146,33 +125,8 @@ def sync(entra: EntraID, lakefs: LakeFSAuth, group_filter: Optional[str] = None,
                 for policy_id in default_policies:
                     print(f'Attaching policy "{policy_id}" to group: "{group_id}"')
                     if dry_run:
-                        print(f'attach policy "{policy_id}" to group "{group_ip}"')
+                        print(f'attach policy "{policy_id}" to group "{group_id}"')
                     lakefs.attach_policy_to_group(policy_id, group_id)
-        
-        # Sync members
-        entra_members = set([f'waad|{user_id}' for user_id in entra.list_users(group_id)])
-        lakefs_members = set(lakes.list_users(group_id))
-        
-        # Add
-        to_add = entra_members.difference(lakefs_members)
-        print(f'Adding {len(to_add)} members to group "{group_id}"')
-        for user_id in to_add:
-            # try to provision if doesn't exist
-            lakefs.create_user(user_id=user_id, exist_ok=True)
-            # Add to group
-            if dry_run:
-                print(f'add user to group: {user_id} -> {group_id}')
-            else:
-                lakefs.add_user_to_group(group_id, user_id)
-        
-        # Remove
-        to_remove = lakefs_members.difference(entra_members)
-        print(f'Removing {len(to_remove)} members from group "{group_id}"')
-        for user_id in to_remove:
-            if dry_run:
-                print(f'remove user from group: {user_id} -> {group_id}')
-            else:
-                lakefs.remove_user_from_group(group_id, user_id)    
         
         # Done!
         print(f'Done syncing group: "{group_id}"')
@@ -185,4 +139,4 @@ if __name__ == '__main__':
     policies = None
     if LAKEFS_DEFAULT_POLICIES:
         policies = [p.strip() for p in LAKEFS_DEFAULT_POLICIES.split(',')]
-    sync(entra, lakefs, GROUP_MATCH, default_policies=policies, dry_run=True)
+    sync_groups(entra, lakefs, GROUP_MATCH, default_policies=policies, dry_run=True)
