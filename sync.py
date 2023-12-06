@@ -31,6 +31,7 @@ DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 class EntraID:
 
     def __init__(self, tenant_id, application_id, client_secret):
+        self._application_id = application_id
         self._access_token = EntraID._get_access_token(
             tenant_id, application_id, client_secret)
     
@@ -47,20 +48,21 @@ class EntraID:
             result = app.acquire_token_for_client(scopes=scope)
         return result.get('access_token')
     
-    def _lookup(self, path: str, params: Optional[dict[str, str]] = None):
+    def _lookup(self, params: Optional[dict[str, str]] = None):
         auth_headers = {'Authorization': f'Bearer {self._access_token}'}
-        uri = requote_uri('https://graph.microsoft.com/v1.0' + path)
+        uri = f'https://graph.microsoft.com/v1.0/servicePrincipals(appId=\'{self._application_id}\')/appRoleAssignedTo'
         response = requests.get(uri, headers=auth_headers, params=params).json()
         while True:
             for item in response.get('value'):
-                yield item
+                if item.get('principalType') == 'Group':
+                    yield item
             uri = response.get('@odata.nextLink')
             if not uri:
                 break
             response = requests.get(uri, headers=auth_headers, params=params).json()
 
-    def get_group_names(self, key='displayName') -> List[str]:
-        groups = self._lookup('/groups')
+    def get_group_names(self, key='principalDisplayName') -> List[str]:
+        groups = self._lookup()
         return [group.get(key) for group in groups]
 
 
