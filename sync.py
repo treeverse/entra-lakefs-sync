@@ -1,14 +1,13 @@
-import json
 import os
 import fnmatch
-from typing import List, Optional, Iterator
+from typing import Generator, List, Optional, Callable
 
 import msal
 import requests
 from requests.utils import requote_uri
 import lakefs_sdk
 from lakefs_sdk.client import LakeFSClient
-from lakefs_sdk.models import GroupCreation, UserCreation
+from lakefs_sdk.models import GroupCreation, Group
 from lakefs_sdk.exceptions import ApiException
 
 from dotenv import load_dotenv
@@ -84,13 +83,13 @@ class LakeFSAuth:
                 break
             kwargs['after'] = resp.pagination.next_offset
     
-    def get_group_names(self) -> Iterator[str]:
+    def get_group_names(self) -> Generator[Group, None, None]:
         for group in LakeFSAuth._pagination_helper(self.client.auth_api.list_groups):
-            yield group.id
+            yield group
     
-    def create_group(self, group_id: str, exist_ok: bool = True):
+    def create_group(self, group_id: str, exist_ok: bool = True) -> Group:
         try:
-            self.client.auth_api.create_group(GroupCreation(id=group_id))
+            return self.client.auth_api.create_group(GroupCreation(id=group_id))
         except ApiException as e:
             if e.status == 409 and exist_ok:
                 return
@@ -100,7 +99,12 @@ class LakeFSAuth:
         self.client.auth_api.attach_policy_to_group(
             group_id=group_id, policy_id=policy_id)
     
-
+def should_add_group(group_filter: Optional[str] = None) -> Callable[[Group], bool]:
+    def _should_add_group(group: Group) -> bool:
+        if group_filter:
+            return fnmatch.fnmatch(group.name, group_filter)
+        return True
+    return _should_add_group
 
 def sync_groups(entra: EntraID, lakefs: LakeFSAuth, group_filter: Optional[str] = None, default_policies: Optional[List[str]] = None, dry_run=True):
     # Get groups from EntraID
@@ -110,19 +114,20 @@ def sync_groups(entra: EntraID, lakefs: LakeFSAuth, group_filter: Optional[str] 
     print(f'found {len(filtered_groups)} matching groups')
 
     # Get current groups from lakeFS
-    lakefs_groups = fnmatch.filter(lakefs.get_group_names(), group_filter)
+    lakefs_groups = list(filter(should_add_group(group_filter), lakefs.get_group_names()))
 
     # Sync them
     for group_id in filtered_groups:
         print(f'Syncing group: "{group_id}"...')
 
         # Create if needed
-        if group_id not in lakefs_groups:
+        if not any(g.name == group_id for g in lakefs_groups):
+            new_group = None
             print(f'\tCreating group: "{group_id}"')
             if dry_run:
                 print(f'create group: "{group_id}"')
             else:
-                lakefs.create_group(group_id)
+                new_group = lakefs.create_group(group_id)
             # Attach default policies
             if default_policies:
                 for policy_id in default_policies:
@@ -130,7 +135,9 @@ def sync_groups(entra: EntraID, lakefs: LakeFSAuth, group_filter: Optional[str] 
                     if dry_run:
                         print(f'attach policy "{policy_id}" to group "{group_id}"')
                     else:
-                        lakefs.attach_policy_to_group(policy_id, group_id)
+                        if not new_group:
+                            new_group = next(g for g in lakefs_groups if g.name == group_id)
+                        lakefs.attach_policy_to_group(policy_id, new_group.id)
         
         # Done!
         print(f'Done syncing group: "{group_id}"')

@@ -1,4 +1,4 @@
 requests>=2,<3
 msal>=0.6.1,<2
 python-dotenv>=1.0.0
-lakefs-sdk>=1.1.0
+lakefs-sdk>=1.12.1
